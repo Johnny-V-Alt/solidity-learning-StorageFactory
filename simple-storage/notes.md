@@ -1,134 +1,213 @@
-# SimpleStorage 学习笔记
+# SimpleStorage：保存数字与人员信息
 
-## 范围与验证状态
+## 目录
 
-本笔记整理材料中涉及的合约类型、变量、合约引用、部署和读取入口。
+1. [这个合约做什么](#1-这个合约做什么)
+2. [保存和读取一个数字](#2-保存和读取一个数字)
+3. [用结构体表示一个人](#3-用结构体表示一个人)
+4. [用数组保存多人](#4-用数组保存多人)
+5. [用映射按名字查数字](#5-用映射按名字查数字)
+6. [addPerson 的完整过程](#6-addperson-的完整过程)
+7. [容易混淆的地方](#7-容易混淆的地方)
 
-## 1. 合约类型与变量名
+## 1. 这个合约做什么
+
+源码：[SimpleStorage.sol](SimpleStorage.sol)
+
+合约有两组功能：
+
+| 功能 | 保存位置 | 写入入口 | 读取入口 |
+|---|---|---|---|
+| 保存一个数字 | `myFavoriteNumber` | `store()` | `retrieve()` |
+| 保存人员信息 | `listOfPeople`、`nameToFavoriteNumber` | `addPerson()` | 自动生成的公开读取函数 |
+
+这两组数据相互独立。调用 `addPerson()` 不会修改 `myFavoriteNumber`；调用 `store()` 也不会修改人员记录。
+
+本笔记根据当前源码解释行为，示例结果为代码推导，未进行编译或运行验证。
+
+## 2. 保存和读取一个数字
+
+### 保存位置：状态变量
 
 ```solidity
-SimpleStorage public mystorage;
+uint256 myFavoriteNumber;
 ```
 
-| 部分 | 含义 |
-|---|---|
-| `SimpleStorage` | 合约类型（contract type） |
-| `public` | 可见性（visibility） |
-| `mystorage` | 变量名（variable name） |
+这是状态变量（state variable），用来保存合约中的数字。
 
-与普通整数变量对照：
+`uint256` 表示 256 位无符号整数，只能表示非负整数。未赋值时，它的默认值为 `0`。
+
+### 写入：store
 
 ```solidity
-uint256 public favoriteNumber;
+function store(uint256 _favoriteNumber) public virtual {
+    myFavoriteNumber = _favoriteNumber;
+}
 ```
 
-定义 `contract SimpleStorage` 后，`SimpleStorage` 就可以作为类型使用。
-
-`mystorage` 保存合约引用（contract reference），可以理解为带有合约类型信息的地址。它没有保存整份合约代码或全部状态数据。
-
-## 2. 标识符区分大小写
-
-Solidity 区分大小写（case-sensitive）：
+调用 `store(99)` 时：
 
 ```text
-SimpleStorage
-simpleStorage
-simplestorage
+参数 _favoriteNumber 得到 99
+            ↓
+执行 myFavoriteNumber = _favoriteNumber
+            ↓
+合约保存的数字变成 99
 ```
 
-以上是不同标识符，不能混用。
+- `_favoriteNumber` 是本次调用传进来的参数。
+- `myFavoriteNumber` 是合约中保存数据的变量。
+- `public` 让该函数可以被外部调用。
+- `virtual` 允许派生合约重写它，后续 AddFiveStorage 会用到。
 
-合约名通常大写开头，变量名通常小写开头，这是命名惯例。变量可以换名，但声明和后续使用必须一致。
+源码中的 `//+5` 只是注释。实际执行的赋值没有加 5，建议删除这个误导性注释。
 
-材料中出现过 `simpleStorage`、`mystorage`、`myStorage` 等名称，它们属于不同示例，不能直接视为同一个变量。
-
-## 3. 声明不等于部署
-
-声明状态变量（state variable）：
+### 读取：retrieve
 
 ```solidity
-SimpleStorage public mystorage;
+function retrieve() public view returns (uint256) {
+    return myFavoriteNumber;
+}
 ```
 
-这里只声明用于保存合约引用的变量，没有创建新合约。尚未赋值时，对应零地址。
+- `view`：函数不修改状态。
+- `returns (uint256)`：声明返回一个无符号整数。
+- `return myFavoriteNumber`：把当前保存的数字交给调用者。
 
-在函数体内部署新合约：
+按代码推导：调用 `store(99)` 后，再调用 `retrieve()`，应读到 `99`，前提是期间没有其他调用修改该值。
+
+## 3. 用结构体表示一个人
 
 ```solidity
-mystorage = new SimpleStorage();
+struct Person {
+    uint256 favoriteNumber;
+    string name;
+}
 ```
 
-可以分成两步理解：
+结构体（struct）把相关字段组合成一种类型。
+
+这里，一个 `Person` 包含：
+
+- `favoriteNumber`：这个人喜欢的数字。
+- `name`：这个人的名字。
+
+例如：
+
+```solidity
+Person(7, "Alice")
+```
+
+表示名字为 Alice、喜欢数字 7 的一条人员记录。
+
+参数顺序对应结构体字段的声明顺序：先数字，后名字。
+
+声明结构体只是定义数据的组织方式，不会自动添加任何人员记录。
+
+## 4. 用数组保存多人
+
+```solidity
+Person[] public listOfPeople;
+```
+
+`Person[]` 是元素类型为 `Person` 的动态数组（dynamic array）。
+
+可以把它理解为按顺序排列的人员列表：
 
 ```text
-new SimpleStorage() → 部署新合约，得到引用
-mystorage = ...     → 将引用保存到变量
+索引 0 → Alice，7
+索引 1 → Bob，12
 ```
 
-新实例（instance）有自己的地址与存储（storage）。部署时执行初始化代码，包括构造函数（constructor，如果有）。
+数组索引从 `0` 开始。
 
-以上是不同位置的代码片段，不是完整合约。
+`public` 会生成读取入口。例如，在 Remix 中向 `listOfPeople` 的读取入口输入 `0`，可以读取第一个元素的字段。它不是一次返回整个数组。
 
-## 4. 部署与调用的区别
-
-部署：
+## 5. 用映射按名字查数字
 
 ```solidity
-mystorage = new SimpleStorage();
+mapping(string => uint256) public nameToFavoriteNumber;
 ```
 
-调用已有实例的函数：
+映射（mapping）建立“名字 → 数字”的对应关系：
+
+```text
+"Alice" → 7
+"Bob"   → 12
+```
+
+与数组的区别：
+
+| 数据结构 | 查找依据 | 本项目中的用途 |
+|---|---|---|
+| 数组 `listOfPeople` | 索引，例如 `0` | 按位置读取人员记录 |
+| 映射 `nameToFavoriteNumber` | 名字，例如 `"Alice"` | 按名字查询喜欢的数字 |
+
+对于尚未写入的名字，映射读取结果为 `0`。因此，单凭结果为 `0`，不能判断这个名字不存在，还是它对应的数字本来就是 `0`。
+
+## 6. addPerson 的完整过程
 
 ```solidity
-mystorage.store(123);
+function addPerson(string memory _name, uint256 _favoriteNumber) public {
+    listOfPeople.push(Person(_favoriteNumber, _name));
+    nameToFavoriteNumber[_name] = _favoriteNumber;
+}
 ```
 
-第二行以目标合约提供兼容、可调用的 `store` 函数为前提。它调用已有合约，不会再次部署合约。
+调用示例：
 
-具体如何保存数字取决于 `store` 的实际实现，材料没有完整展示该实现。
-
-## 5. public 与 getter
-
-```solidity
-SimpleStorage public mystorage;
+```text
+addPerson("Alice", 7)
 ```
 
-编译器会为这个公开状态变量生成读取函数（getter）。
+函数做两件事：
 
-外部调用 `mystorage()`，可以读取它保存的合约地址。这不会自动把目标合约的 `store()` 等函数变成当前合约自己的函数。
+1. 创建 `Person(7, "Alice")`，追加到数组末尾。
+2. 在映射中保存 `"Alice" → 7`。
 
-材料记录了 getter 返回非零地址。结合创建代码，可以将其理解为新合约地址，但材料没有提供该地址上代码的独立检查。
+`push()` 表示向动态数组末尾追加元素。
 
-部署地址不需要与教程一致。
+`string memory _name` 中的 `memory` 指定这个字符串参数在调用期间使用的临时数据位置，不表示名字不能被保存到状态变量中。
 
-## 6. 常见错误
+### 同名记录会怎样
 
-### 6.1 创建合约缺少括号
+再次调用：
 
-**错误：**
-
-```solidity
-mystorage = new SimpleStorage;
+```text
+addPerson("Alice", 9)
 ```
 
-**原因：** 创建合约时缺少调用括号，即使没有构造参数也需要 `()`。
+按代码推导：
 
-**修正：**
+- 数组会追加另一条 Alice 的记录。
+- 映射中 Alice 对应的数字会更新为 `9`。
 
-```solidity
-mystorage = new SimpleStorage();
-```
+原因是数组使用 `push()` 追加，而映射使用赋值更新同一个键。源码没有禁止重名。
 
-材料记录了红色波浪线，没有提供该错误的编译器诊断原文，也没有提供修正后的完整编译结果。
+## 7. 容易混淆的地方
 
-### 6.2 类型名与变量名混淆
+### 把两个数字当成同一个变量
 
-**误解：** `SimpleStorage` 和 `mystorage` 都是合约名称。
+**误解 →** `store(99)` 后，所有人的 `favoriteNumber` 都变成 99。
 
-**原因：** 没有区分类型与变量。
+**原因 →** 混淆了合约的 `myFavoriteNumber` 和结构体字段 `favoriteNumber`。
 
-**修正理解：**
+**修正 →** 它们是不同的保存位置，分别由不同函数修改。
 
-- `SimpleStorage` 指定变量的合约类型。
-- `mystorage` 是保存某个合约引用的变量名。
-- 新合约由 `new SimpleStorage()` 创建，不由变量名决定。
+### 认为 myFavoriteNumber 没有 public 就无法读取
+
+**误解 →** 没有自动生成的读取按钮，所以变量不能读取。
+
+**原因 →** 混淆变量的直接访问与函数提供的读取入口。
+
+**修正 →** 当前合约通过 `retrieve()` 返回这个变量。
+
+`myFavoriteNumber` 没有显式声明可见性，默认是 `internal`：当前合约和派生合约可以在代码内部访问它。
+
+### 将注释当成执行逻辑
+
+**误解 →** 看到 `//+5`，就认为 SimpleStorage 保存时会加 5。
+
+**原因 →** 注释描述与实际赋值不一致。
+
+**修正 →** 以执行语句为准，删除不准确的注释。加 5 的逻辑位于 AddFiveStorage。
